@@ -7,7 +7,7 @@ $PackageDir = Join-Path $OutputDir "Codex Claude Signal-win32-x64"
 $ZipPath = Join-Path $OutputDir "CodexClaudeSignal-Windows-x64.zip"
 
 Set-Location $WindowsDir
-npm install
+npm ci
 npm test
 npm run make-icon
 npm run pack:win

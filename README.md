@@ -1,5 +1,7 @@
 # Codex Claude Cursor Signal
 
+[![Build](https://github.com/sxlisme/codex-claude-cursor-signal/actions/workflows/build.yml/badge.svg)](https://github.com/sxlisme/codex-claude-cursor-signal/actions/workflows/build.yml)
+
 面向 macOS 和 Windows 的本地 Agent 状态指示灯。应用同时常驻系统托盘和桌面顶部；每打开一个 Codex、Claude Code 或 Cursor 会话，就显示一组独立状态灯。
 
 <p align="center">
@@ -33,6 +35,20 @@ open dist/CodexClaudeSignal.app
 `build-app.sh` 生成同时支持 Apple Silicon 和 Intel Mac 的 Universal 应用，并做本地 ad-hoc 签名。
 
 Windows 10/11 x64 版本、使用方法和构建命令见 [Windows/README.md](Windows/README.md)。
+
+## GitHub 自动构建
+
+推送到 `main`、创建 Pull Request，或从 Actions 页面手动运行 `Build`，都会并行构建：
+
+- `CodexClaudeCursorSignal-macOS-universal.zip`
+- `CodexClaudeSignal-Windows-x64.zip`
+
+构建完成后可在对应 Workflow Run 的 **Artifacts** 区域下载。推送 `v*` 标签时还会自动创建 GitHub Release，并附加两个平台的 ZIP：
+
+```bash
+git tag v0.4.1
+git push origin v0.4.1
+```
 
 ## 连接 Codex、Claude Code 和 Cursor
 
