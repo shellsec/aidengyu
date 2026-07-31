@@ -1,0 +1,11 @@
+.DS_Store
+**/.DS_Store
+.e2e-state/
+.native-tests/
+dist/
+dist-windows/
+node_modules/
+Windows/node_modules/
+npm-debug.log*
+*.log
+ui-check.png
