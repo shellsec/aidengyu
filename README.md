@@ -8,6 +8,12 @@
   <img src="docs/app-preview.jpg" width="294" alt="Codex、Claude Code 和 Cursor 状态灯预览">
 </p>
 
+### 实际使用效果
+
+<p align="center">
+  <img src="docs/app-in-use.png" width="100%" alt="macOS 菜单栏、三灯模式与多会话实际使用效果">
+</p>
+
 ## 当前能力
 
 - macOS 使用原生 AppKit 且不显示 Dock 图标；Windows 使用 Electron 并常驻系统托盘。
