@@ -23,10 +23,13 @@ FOUNDATION_EXPORT NSArray<NSString *> *ASClaudeHookEvents(void);
 FOUNDATION_EXPORT NSArray<NSString *> *ASCursorHookEvents(void);
 
 FOUNDATION_EXPORT NSString *ASAgentDisplayName(NSString *agent);
+FOUNDATION_EXPORT NSString *ASResolveAgent(NSString *agent, NSString * _Nullable eventName);
 FOUNDATION_EXPORT NSString *ASStateTitle(NSString *state);
 FOUNDATION_EXPORT NSInteger ASStatePriority(NSString *state);
 FOUNDATION_EXPORT NSDate * _Nullable ASSignalUpdatedAt(NSDictionary *signal);
 FOUNDATION_EXPORT NSString *ASDisplayState(NSDictionary *signal, NSDate *now);
+FOUNDATION_EXPORT BOOL ASIsPhantomReadySession(NSDictionary *signal);
+FOUNDATION_EXPORT BOOL ASShouldShowSignal(NSDictionary *signal, NSDate *now);
 FOUNDATION_EXPORT NSDictionary<NSString *, NSString *> *ASLampPresentation(NSString *state);
 
 FOUNDATION_EXPORT NSDictionary * _Nullable ASMapHookPayload(

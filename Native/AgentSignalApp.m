@@ -295,10 +295,7 @@ static NSTextField *ASLabel(NSString *text, CGFloat size, NSFontWeight weight) {
     NSDate *now = NSDate.date;
     NSMutableArray<NSDictionary *> *visible = [NSMutableArray array];
     for (NSDictionary *signal in ASLoadSignals(ASSignalRootURL())) {
-        NSString *state = signal[@"state"];
-        NSDate *updatedAt = ASSignalUpdatedAt(signal);
-        if ([state isEqualToString:ASStateOffline] &&
-            (!updatedAt || [now timeIntervalSinceDate:updatedAt] > 3)) continue;
+        if (!ASShouldShowSignal(signal, now)) continue;
         [visible addObject:signal];
     }
 
@@ -326,9 +323,14 @@ static NSTextField *ASLabel(NSString *text, CGFloat size, NSFontWeight weight) {
 
 - (NSString *)aggregateState {
     NSString *best = ASStateOffline;
+    NSInteger bestPriority = -1;
     for (NSDictionary *signal in self.signals) {
         NSString *state = ASDisplayState(signal, NSDate.date);
-        if (ASStatePriority(state) > ASStatePriority(best)) best = state;
+        NSInteger priority = ASStatePriority(state);
+        if (priority > bestPriority) {
+            best = state;
+            bestPriority = priority;
+        }
     }
     return best;
 }

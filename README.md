@@ -1,6 +1,29 @@
-# Codex Claude Cursor Signal
+﻿**语言 / Language:** 中文 | [English](README.en.md)
 
-[![Build](https://github.com/sxlisme/codex-claude-cursor-signal/actions/workflows/build.yml/badge.svg)](https://github.com/sxlisme/codex-claude-cursor-signal/actions/workflows/build.yml)
+[aiv123.com](https://aiv123.com/) · AI 工具导航，600+ 工具一网打尽
+
+## 🚀 推荐使用 [ofox.ai](https://ofox.io/x/aiv123)
+
+> **一句话**：一个账号直达最新 GPT / Claude / Gemini 等 **100+** 顶尖模型，首充额外赠 **$3** 额度。
+
+文本、图像、视频、向量一站调用；支持缓存，重复请求更省更快。
+
+[👉 注册领取](https://ofox.io/x/aiv123) · 全球专线 · 企业级 SLA · 不留存对话
+
+| ⚡️ 极速更省 | 🧠 模型与模态 | 🛡️ 隐私安全 |
+|:---:|:---:|:---:|
+| 全球专线，企业级 SLA，支持缓存 | 100+ 模型 · 文本 / 图像 / 视频 / 向量 | 不留存任何对话 |
+
+## ☕ 请我喝可乐
+
+开源不易，欢迎赞助支持：  
+👉 [爱发电](https://ifdian.net/a/shellsec)
+
+---
+
+# 灯语（aidengyu）
+
+[![Build](https://github.com/shellsec/aidengyu/actions/workflows/build.yml/badge.svg)](https://github.com/shellsec/aidengyu/actions/workflows/build.yml)
 
 面向 macOS 和 Windows 的本地 Agent 状态指示灯。应用同时常驻系统托盘和桌面顶部；每打开一个 Codex、Claude Code 或 Cursor 会话，就显示一组独立状态灯。
 
@@ -16,7 +39,7 @@
 
 ## 当前能力
 
-- macOS 使用原生 AppKit 且不显示 Dock 图标；Windows 使用 Electron 并常驻系统托盘。
+- macOS 使用原生 AppKit 且不显示 Dock 图标；Windows 使用 Go + Win32 原生托盘单文件，体积约数 MB。
 - 顶部 `NSPanel` 始终置顶，并加入所有桌面与全屏辅助空间；可拖动，且至少保留一部分在当前屏幕内。
 - 默认使用紧凑单灯显示状态，也可从菜单切换为街头红绿灯三灯样式；多个会话垂直排列，异常和等待状态优先。
 - 面板使用半透明毛玻璃背景，会话之间以轻量分割线区分。
@@ -35,21 +58,50 @@
 ```bash
 Scripts/test.sh
 Scripts/build-app.sh
-open dist/CodexClaudeSignal.app
 ```
 
-`build-app.sh` 生成同时支持 Apple Silicon 和 Intel Mac 的 Universal 应用，并做本地 ad-hoc 签名。
+`build-app.sh` 生成同时支持 Apple Silicon 和 Intel Mac 的 Universal 应用（`dist/aidengyu.app`），做本地 ad-hoc 签名，并调用 `Scripts/create-dmg.sh` 打出拖拽安装盘：
 
-Windows 10/11 x64 版本、使用方法和构建命令见 [Windows/README.md](Windows/README.md)。
+- `dist/aidengyu.app`
+- `dist/aidengyu-macOS-universal.dmg`
+
+也可在已有 `.app` 后单独打 DMG（必须在 macOS 上，依赖系统自带 `hdiutil`）：
+
+```bash
+Scripts/create-dmg.sh dist/aidengyu.app
+```
+
+### macOS 安装（拖拽）
+
+1. 打开 `aidengyu-macOS-universal.dmg`。
+2. 将左侧的 **灯语（aidengyu.app）** 拖到右侧的 **应用程序（Applications）** 文件夹。
+3. 从「应用程序」启动「灯语」。
+
+开发时也可直接运行未安装的包：`open dist/aidengyu.app`。
+
+Windows 10/11 x64 版本、使用方法和构建命令见 [Windows/README.md](Windows/README.md)。需要 [Go](https://go.dev/dl/) 1.22+：
+
+```powershell
+.\Windows\build-windows.ps1
+```
+
+在 macOS / Linux 上也可交叉编译 Windows x64：
+
+```bash
+Windows/build-windows.sh
+```
+
+产物：`dist-windows/aidengyu.exe`、`dist-windows/aidengyu-Windows-x64.zip`。
 
 ## GitHub 自动构建
 
 推送到 `main`、创建 Pull Request，或从 Actions 页面手动运行 `Build`，都会并行构建：
 
-- `CodexClaudeCursorSignal-macOS-universal.zip`
-- `CodexClaudeSignal-Windows-x64.zip`
+- `aidengyu-macOS-universal.zip`（可选解压使用）
+- `aidengyu-macOS-universal.dmg`（推荐：打开后拖到「应用程序」安装）
+- `aidengyu-Windows-x64.zip`
 
-构建完成后可在对应 Workflow Run 的 **Artifacts** 区域下载。推送 `v*` 标签时还会自动创建 GitHub Release，并附加两个平台的 ZIP：
+构建完成后可在对应 Workflow Run 的 **Artifacts** 区域下载。推送 `v*` 标签时还会自动创建 GitHub Release，并附加上述产物：
 
 ```bash
 git tag v0.4.1
@@ -66,13 +118,13 @@ git push origin v0.4.1
 也可以用打包后的 Helper 安装：
 
 ```bash
-dist/CodexClaudeSignal.app/Contents/Helpers/AgentSignalHook --install
+dist/aidengyu.app/Contents/Helpers/AgentSignalHook --install
 ```
 
 卸载只移除本应用管理的 Hook 条目：
 
 ```bash
-dist/CodexClaudeSignal.app/Contents/Helpers/AgentSignalHook --uninstall
+dist/aidengyu.app/Contents/Helpers/AgentSignalHook --uninstall
 ```
 
 ## 本地数据
@@ -80,21 +132,30 @@ dist/CodexClaudeSignal.app/Contents/Helpers/AgentSignalHook --uninstall
 状态文件位于：
 
 ```text
-~/Library/Application Support/CodexClaudeSignal/sessions/
+~/Library/Application Support/aidengyu/sessions/
 ```
+
+若仍存在旧目录 `CodexClaudeSignal`，首次启动会尝试一次性迁移到 `aidengyu`；迁移失败时继续从旧目录读取，避免会话灯状态丢失。
 
 每个会话一个 JSON 文件，只记录：Agent 类型、`session_id`、工作目录、事件名、状态、更新时间、简短错误原因，以及从用户输入首行提取的最多 36 个字符任务标题。Hook 不保存完整 prompt、模型输出、工具参数或对话正文。
 
 ## 项目结构
 
 ```text
-Native/SignalCore.*       状态映射、文件存储、Hook 配置合并
-Native/AgentSignalHook.m  Codex / Claude Code / Cursor Hook 可执行文件
-Native/AgentSignalApp.m   菜单栏、置顶面板和灯光动画
-NativeTests/              无外部依赖的核心测试
-Windows/                  Electron Windows 应用、Node 核心测试和打包脚本
-Scripts/                  构建与测试脚本
-docs/                     状态规范
+Native/SignalCore.*              状态映射、文件存储、Hook 配置合并（macOS）
+Native/AgentSignalHook.m         Codex / Claude Code / Cursor Hook 可执行文件
+Native/AgentSignalApp.m          菜单栏、置顶面板和灯光动画
+NativeTests/                     无外部依赖的核心测试
+Windows/cmd/signal/              Go 入口（托盘 UI + Hook CLI，单文件 exe）
+Windows/internal/core/           Windows 状态映射、存储与 Hook 合并
+Windows/internal/ui/             Win32 托盘与置顶面板
+Windows/assets/app.ico           嵌入 exe 的图标
+Windows/build-windows.ps1|.sh    Windows 构建与打包
+Scripts/build-app.sh             macOS Universal .app（并调用 create-dmg.sh）
+Scripts/create-dmg.sh            macOS 拖拽安装 DMG
+Scripts/test.sh                  macOS 核心测试
+docs/                            状态规范与截图
+.github/workflows/build.yml      并行构建 macOS / Windows 产物
 ```
 
 ## 开源参考

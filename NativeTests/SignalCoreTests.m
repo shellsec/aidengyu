@@ -89,6 +89,32 @@ int main(void) {
         ASAssert([cursorSignal[@"cwd"] isEqualToString:@"/tmp/cursor-project"], @"Cursor workspace root maps to cwd");
         ASAssert([cursorSignal[@"task_title"] isEqualToString:@"支持 Cursor 状态灯"], @"Cursor prompt becomes task title");
 
+        NSDictionary *importedAsClaude = ASMapHookPayload(@{
+            @"session_id": @"shared-session",
+            @"hook_event_name": @"postToolUse",
+            @"cwd": @"/tmp/minx"
+        }, ASAgentClaude, nil, NSDate.date, nil);
+        ASAssert([importedAsClaude[@"agent"] isEqualToString:ASAgentCursor],
+            @"Cursor camelCase events stay Cursor even when Claude hooks were imported");
+        ASAssert([ASResolveAgent(ASAgentClaude, @"sessionStart") isEqualToString:ASAgentCursor],
+            @"sessionStart resolves to Cursor");
+        ASAssert([ASResolveAgent(ASAgentClaude, @"SessionStart") isEqualToString:ASAgentClaude],
+            @"SessionStart keeps Claude");
+        ASAssert([ASResolveAgent(ASAgentCodex, @"Stop") isEqualToString:ASAgentCodex],
+            @"Codex PascalCase Stop stays Codex");
+        ASAssert([ASResolveAgent(ASAgentClaude, @"Stop") isEqualToString:ASAgentClaude],
+            @"Claude Stop is not Cursor stop");
+        ASAssert([ASResolveAgent(ASAgentClaude, @"stop") isEqualToString:ASAgentCursor],
+            @"lowercase stop is Cursor dialect");
+        for (NSString *event in ASClaudeHookEvents()) {
+            ASAssert([ASResolveAgent(ASAgentClaude, event) isEqualToString:ASAgentClaude],
+                @"Claude PascalCase events stay Claude");
+        }
+        for (NSString *event in ASCodexHookEvents()) {
+            ASAssert([ASResolveAgent(ASAgentCodex, event) isEqualToString:ASAgentCodex],
+                @"Codex PascalCase events stay Codex");
+        }
+
         NSDictionary *failed = ASMap(ASPayload(@"PostToolUseFailure"));
         NSDictionary *completed = ASMap(ASPayload(@"Stop"));
         ASAssert([ASMergeSignal(failed, completed)[@"state"] isEqualToString:ASStateFailed], @"Stop does not hide a failure");
@@ -115,6 +141,12 @@ int main(void) {
         NSError *mapError = nil;
         NSDictionary *oldCompleted = ASMapHookPayload(ASPayload(@"Stop"), ASAgentCodex, nil, oldDate, &mapError);
         ASAssert([ASDisplayState(oldCompleted, NSDate.date) isEqualToString:ASStateReady], @"completed settles to ready");
+
+        ASAssert(ASStatePriority(ASStateStale) < ASStatePriority(ASStateReady), @"stale sorts below ready");
+        ASAssert(ASStatePriority(ASStateStale) < ASStatePriority(ASStateWorking), @"stale sorts below working");
+        ASAssert(ASStatePriority(ASStateStale) < ASStatePriority(ASStateOffline), @"stale sorts below offline");
+        ASAssert(ASStatePriority(ASStateAttention) > ASStatePriority(ASStateWorking), @"attention stays above working");
+        ASAssert(ASStatePriority(ASStateWorking) > ASStatePriority(ASStateReady), @"working stays above ready");
 
         NSURL *temporary = [NSURL fileURLWithPath:[NSTemporaryDirectory()
             stringByAppendingPathComponent:NSUUID.UUID.UUIDString] isDirectory:YES];
@@ -151,7 +183,7 @@ int main(void) {
         NSData *originalCursorData = [NSJSONSerialization dataWithJSONObject:originalCursor options:0 error:nil];
         [originalCursorData writeToURL:cursorURL atomically:YES];
 
-        NSString *hookPath = @"/Applications/CodexClaudeSignal.app/Contents/Helpers/AgentSignalHook";
+        NSString *hookPath = @"/Applications/aidengyu.app/Contents/Helpers/AgentSignalHook";
         NSError *installError = nil;
         ASAssert(ASInstallHooks(hookPath, temporary, &installError), @"installs hook configuration");
         ASAssert(ASInstallHooks(hookPath, temporary, &installError), @"reinstall is idempotent");

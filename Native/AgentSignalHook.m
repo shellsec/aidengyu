@@ -59,6 +59,13 @@ int main(int argc, const char *argv[]) {
         }
 
         NSData *input = [[NSFileHandle fileHandleWithStandardInput] readDataToEndOfFile];
+        // Cursor may prefix hook stdin with a UTF-8 BOM; NSJSONSerialization rejects it.
+        if (input.length >= 3) {
+            const uint8_t *bytes = input.bytes;
+            if (bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+                input = [input subdataWithRange:NSMakeRange(3, input.length - 3)];
+            }
+        }
         NSMutableDictionary *payload = nil;
         if (input.length) {
             id object = [NSJSONSerialization JSONObjectWithData:input options:NSJSONReadingMutableContainers error:nil];

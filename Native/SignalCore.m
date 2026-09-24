@@ -16,8 +16,9 @@ NSString * const ASStateBlocked = @"blocked";
 NSString * const ASStateStale = @"stale";
 NSString * const ASStateOffline = @"offline";
 
-static NSString * const ASErrorDomain = @"CodexClaudeSignal";
+static NSString * const ASErrorDomain = @"aidengyu";
 static NSString * const ASManagedHookToken = @"AgentSignalHook";
+static NSString * const ASLegacyManagedHookToken = @"CodexClaudeSignal";
 
 NSArray<NSString *> *ASCodexHookEvents(void) {
     return @[
@@ -48,6 +49,19 @@ NSString *ASAgentDisplayName(NSString *agent) {
     return @"Codex";
 }
 
+// Attribution by event-name dialect (exact match, case-sensitive):
+// - Cursor alone imports ~/.claude/settings.json and re-invokes those commands with
+//   camelCase payloads while keeping --agent claude. Prefer dialect over --agent.
+// - Claude Code and Codex only read their own configs; they do not execute
+//   ~/.cursor/hooks.json. Their PascalCase events must stay put.
+NSString *ASResolveAgent(NSString *agent, NSString *eventName) {
+    if (eventName.length && [ASCursorHookEvents() containsObject:eventName]) return ASAgentCursor;
+    if ([agent isEqualToString:ASAgentClaude] ||
+        [agent isEqualToString:ASAgentCursor] ||
+        [agent isEqualToString:ASAgentCodex]) return agent;
+    return ASAgentCodex;
+}
+
 NSString *ASStateTitle(NSString *state) {
     NSDictionary *titles = @{
         ASStateReady: @"就绪",
@@ -70,11 +84,13 @@ NSInteger ASStatePriority(NSString *state) {
     if ([state isEqualToString:ASStateFailed]) return 90;
     if ([state isEqualToString:ASStateWaitingApproval]) return 80;
     if ([state isEqualToString:ASStateWaitingInput]) return 70;
-    if ([state isEqualToString:ASStateAttention] || [state isEqualToString:ASStateStale]) return 60;
+    if ([state isEqualToString:ASStateAttention]) return 60;
     if ([state isEqualToString:ASStateWorking]) return 50;
     if ([state isEqualToString:ASStateThinking]) return 40;
     if ([state isEqualToString:ASStateCompleted]) return 30;
     if ([state isEqualToString:ASStateReady]) return 20;
+    if ([state isEqualToString:ASStateOffline]) return 10;
+    if ([state isEqualToString:ASStateStale]) return 0;
     return 0;
 }
 
@@ -102,6 +118,9 @@ NSDate *ASSignalUpdatedAt(NSDictionary *signal) {
     return ASDateFromString(signal[@"updated_at"]);
 }
 
+static NSString *ASNormalize(NSString *value);
+static BOOL ASPostToolIdleEvent(NSString *eventName);
+
 NSString *ASDisplayState(NSDictionary *signal, NSDate *now) {
     NSString *state = signal[@"state"] ?: ASStateStale;
     NSDate *updatedAt = ASDateFromString(signal[@"updated_at"]);
@@ -110,12 +129,37 @@ NSString *ASDisplayState(NSDictionary *signal, NSDate *now) {
     NSTimeInterval age = [now timeIntervalSinceDate:updatedAt];
     if ([state isEqualToString:ASStateCompleted] && age > 15) return ASStateReady;
     if ([state isEqualToString:ASStateWaitingApproval] && age > 30) return ASStateAttention;
+    if ([state isEqualToString:ASStateWorking] && age > 45 && ASPostToolIdleEvent(signal[@"event_name"])) {
+        return ASStateReady;
+    }
 
     NSSet *terminalStates = [NSSet setWithArray:@[
         ASStateOffline, ASStateCompleted, ASStateFailed, ASStateBlocked
     ]];
     if (![terminalStates containsObject:state] && age > 600) return ASStateStale;
     return state;
+}
+
+static BOOL ASPostToolIdleEvent(NSString *eventName) {
+    NSString *event = ASNormalize(eventName ?: @"");
+    return [event isEqualToString:@"posttooluse"] ||
+        [event isEqualToString:@"posttoolbatch"] ||
+        [event isEqualToString:@"taskcompleted"];
+}
+
+BOOL ASIsPhantomReadySession(NSDictionary *signal) {
+    if (![signal[@"state"] isEqualToString:ASStateReady]) return NO;
+    if ([signal[@"cwd"] length] > 0 || [signal[@"task_title"] length] > 0) return NO;
+    NSString *event = ASNormalize(signal[@"event_name"] ?: @"");
+    return [event isEqualToString:@"sessionstart"] || event.length == 0;
+}
+
+BOOL ASShouldShowSignal(NSDictionary *signal, NSDate *now) {
+    if (ASIsPhantomReadySession(signal)) return NO;
+    if (![signal[@"state"] isEqualToString:ASStateOffline]) return YES;
+    NSDate *updatedAt = ASDateFromString(signal[@"updated_at"]);
+    if (!updatedAt) return NO;
+    return [now timeIntervalSinceDate:updatedAt] <= 3;
 }
 
 NSDictionary<NSString *, NSString *> *ASLampPresentation(NSString *state) {
@@ -333,7 +377,7 @@ NSDictionary *ASMapHookPayload(
 
     NSMutableDictionary *signal = [@{
         @"schema_version": @1,
-        @"agent": agent,
+        @"agent": ASResolveAgent(agent, eventName),
         @"session_id": sessionID,
         @"state": ASStateForEvent(eventName, payload),
         @"event_name": eventName,
@@ -371,7 +415,19 @@ NSDictionary *ASMergeSignal(NSDictionary *existing, NSDictionary *incoming) {
         if (![deduplicated[@"task_title"] length] && [existing[@"task_title"] length]) {
             deduplicated[@"task_title"] = existing[@"task_title"];
         }
+        if (![deduplicated[@"cwd"] length] && [existing[@"cwd"] length]) {
+            deduplicated[@"cwd"] = existing[@"cwd"];
+        }
         return deduplicated;
+    }
+
+    if ([oldState isEqualToString:ASStateCompleted] &&
+        [newState isEqualToString:ASStateWorking] &&
+        ASPostToolIdleEvent(incoming[@"event_name"])) {
+        NSMutableDictionary *kept = [existing mutableCopy];
+        if ([incoming[@"task_title"] length]) kept[@"task_title"] = incoming[@"task_title"];
+        if ([incoming[@"cwd"] length]) kept[@"cwd"] = incoming[@"cwd"];
+        return kept;
     }
 
     if (oldNeedsProtection && !resolvingEvent && lowPriorityEvent &&
@@ -383,14 +439,40 @@ NSDictionary *ASMergeSignal(NSDictionary *existing, NSDictionary *incoming) {
     if (![merged[@"task_title"] length] && [existing[@"task_title"] length]) {
         merged[@"task_title"] = existing[@"task_title"];
     }
+    if (![merged[@"cwd"] length] && [existing[@"cwd"] length]) {
+        merged[@"cwd"] = existing[@"cwd"];
+    }
     return merged;
 }
 
 NSURL *ASSignalRootURL(void) {
-    NSString *override = NSProcessInfo.processInfo.environment[@"CODEX_CLAUDE_SIGNAL_HOME"];
+    NSString *override = NSProcessInfo.processInfo.environment[@"AIDENGYU_HOME"];
+    if (!override.length) {
+        override = NSProcessInfo.processInfo.environment[@"CODEX_CLAUDE_SIGNAL_HOME"];
+    }
     if (override.length) return [NSURL fileURLWithPath:override isDirectory:YES];
-    return [[NSFileManager.defaultManager homeDirectoryForCurrentUser]
-        URLByAppendingPathComponent:@"Library/Application Support/CodexClaudeSignal" isDirectory:YES];
+
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSURL *support = [fm.homeDirectoryForCurrentUser
+        URLByAppendingPathComponent:@"Library/Application Support" isDirectory:YES];
+    NSURL *preferred = [support URLByAppendingPathComponent:@"aidengyu" isDirectory:YES];
+    BOOL preferredIsDir = NO;
+    if ([fm fileExistsAtPath:preferred.path isDirectory:&preferredIsDir] && preferredIsDir) {
+        return preferred;
+    }
+
+    NSArray<NSString *> *legacyNames = @[@"CodexClaudeSignal", @"CodexClaudeSignalWindows"];
+    for (NSString *name in legacyNames) {
+        NSURL *legacy = [support URLByAppendingPathComponent:name isDirectory:YES];
+        BOOL legacyIsDir = NO;
+        if (![fm fileExistsAtPath:legacy.path isDirectory:&legacyIsDir] || !legacyIsDir) continue;
+        NSError *renameError = nil;
+        if ([fm moveItemAtURL:legacy toURL:preferred error:&renameError]) {
+            return preferred;
+        }
+        return legacy;
+    }
+    return preferred;
 }
 
 static NSURL *ASSessionsURL(NSURL *rootURL) {
@@ -420,16 +502,26 @@ static NSURL *ASSignalFileURL(NSDictionary *signal, NSURL *rootURL) {
 NSArray<NSDictionary *> *ASLoadSignals(NSURL *rootURL) {
     NSArray<NSURL *> *files = [NSFileManager.defaultManager contentsOfDirectoryAtURL:ASSessionsURL(rootURL)
         includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:nil] ?: @[];
-    NSMutableArray<NSDictionary *> *signals = [NSMutableArray array];
+    NSMutableDictionary<NSString *, NSDictionary *> *byKey = [NSMutableDictionary dictionary];
     for (NSURL *file in files) {
         if (![file.pathExtension isEqualToString:@"json"]) continue;
         NSData *data = [NSData dataWithContentsOfURL:file];
-        NSDictionary *signal = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-        if ([signal isKindOfClass:[NSDictionary class]] && [signal[@"schema_version"] integerValue] == 1) {
-            [signals addObject:signal];
+        NSDictionary *raw = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        if (![raw isKindOfClass:[NSDictionary class]] || [raw[@"schema_version"] integerValue] != 1) continue;
+        NSMutableDictionary *signal = [raw mutableCopy];
+        signal[@"agent"] = ASResolveAgent(raw[@"agent"], raw[@"event_name"]);
+        NSString *key = [NSString stringWithFormat:@"%@\0%@", signal[@"agent"], signal[@"session_id"]];
+        NSDictionary *previous = byKey[key];
+        if (!previous) {
+            byKey[key] = signal;
+            continue;
         }
+        NSString *incomingUpdated = signal[@"updated_at"] ?: @"";
+        NSString *previousUpdated = previous[@"updated_at"] ?: @"";
+        BOOL newerFirst = [incomingUpdated compare:previousUpdated] != NSOrderedAscending;
+        byKey[key] = newerFirst ? ASMergeSignal(previous, signal) : ASMergeSignal(signal, previous);
     }
-    return signals;
+    return byKey.allValues;
 }
 
 BOOL ASWriteSignal(NSDictionary *signal, NSURL *rootURL, NSError **error) {
@@ -437,13 +529,34 @@ BOOL ASWriteSignal(NSDictionary *signal, NSURL *rootURL, NSError **error) {
     if (![NSFileManager.defaultManager createDirectoryAtURL:sessionsURL
         withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:error]) return NO;
 
+    NSMutableDictionary *corrected = [signal mutableCopy];
+    corrected[@"agent"] = ASResolveAgent(signal[@"agent"], signal[@"event_name"]);
+
     NSDictionary *existing = nil;
-    NSURL *fileURL = ASSignalFileURL(signal, rootURL);
+    NSURL *fileURL = ASSignalFileURL(corrected, rootURL);
     NSData *existingData = [NSData dataWithContentsOfURL:fileURL];
     if (existingData) existing = [NSJSONSerialization JSONObjectWithData:existingData options:0 error:nil];
-    NSDictionary *merged = ASMergeSignal(existing, signal);
+    NSDictionary *merged = ASMergeSignal(existing, corrected);
     NSData *data = [NSJSONSerialization dataWithJSONObject:merged options:NSJSONWritingPrettyPrinted error:error];
-    return data ? [data writeToURL:fileURL options:NSDataWritingAtomic error:error] : NO;
+    if (!data || ![data writeToURL:fileURL options:NSDataWritingAtomic error:error]) return NO;
+
+    if ([corrected[@"agent"] isEqualToString:ASAgentCursor]) {
+        for (NSString *other in @[ASAgentCodex, ASAgentClaude]) {
+            NSDictionary *siblingProbe = @{
+                @"agent": other,
+                @"session_id": corrected[@"session_id"] ?: @""
+            };
+            NSURL *siblingURL = ASSignalFileURL(siblingProbe, rootURL);
+            NSData *siblingData = [NSData dataWithContentsOfURL:siblingURL];
+            if (!siblingData) continue;
+            NSDictionary *prior = [NSJSONSerialization JSONObjectWithData:siblingData options:0 error:nil];
+            if ([prior isKindOfClass:[NSDictionary class]] &&
+                [ASResolveAgent(prior[@"agent"], prior[@"event_name"]) isEqualToString:ASAgentCursor]) {
+                [NSFileManager.defaultManager removeItemAtURL:siblingURL error:nil];
+            }
+        }
+    }
+    return YES;
 }
 
 BOOL ASClearSignals(NSURL *rootURL, NSError **error) {
@@ -488,18 +601,28 @@ static NSMutableDictionary *ASLoadMutableJSON(NSURL *url, NSError **error) {
     return root;
 }
 
+static BOOL ASCommandIsManaged(NSString *command) {
+    if (![command isKindOfClass:[NSString class]] || !command.length) return NO;
+    BOOL hasAgent = [command containsString:@"--agent"];
+    if (!hasAgent) return NO;
+    return [command containsString:ASManagedHookToken] ||
+        [command containsString:ASLegacyManagedHookToken] ||
+        [command containsString:@"--aidengyu-hook"] ||
+        [command containsString:@"--codex-claude-signal-hook"];
+}
+
 static BOOL ASIsManagedGroup(NSDictionary *group) {
     NSArray *handlers = [group[@"hooks"] isKindOfClass:[NSArray class]] ? group[@"hooks"] : @[];
     for (NSDictionary *handler in handlers) {
         NSString *command = [handler[@"command"] isKindOfClass:[NSString class]] ? handler[@"command"] : @"";
-        if ([command containsString:ASManagedHookToken] && [command containsString:@"--agent"]) return YES;
+        if (ASCommandIsManaged(command)) return YES;
     }
     return NO;
 }
 
 static BOOL ASIsManagedCursorEntry(NSDictionary *entry) {
     NSString *command = [entry[@"command"] isKindOfClass:[NSString class]] ? entry[@"command"] : @"";
-    return [command containsString:ASManagedHookToken] && [command containsString:@"--agent cursor"];
+    return ASCommandIsManaged(command) && [command containsString:@"--agent cursor"];
 }
 
 static NSString *ASShellQuote(NSString *value) {
