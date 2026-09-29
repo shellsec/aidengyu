@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
+#import <UserNotifications/UserNotifications.h>
 #import <math.h>
 #import "SignalCore.h"
 
@@ -37,6 +38,7 @@ typedef NS_ENUM(NSInteger, ASLampMode) {
 };
 
 static NSString * const ASLampModeDefaultsKey = @"lampMode";
+static NSString * const ASMaxVisibleSessionsDefaultsKey = @"maxVisibleSessions";
 
 static CGFloat ASEffectIntensity(NSString *effect, NSDate *updatedAt) {
     NSTimeInterval now = NSDate.timeIntervalSinceReferenceDate;
@@ -273,6 +275,7 @@ static NSTextField *ASLabel(NSString *text, CGFloat size, NSFontWeight weight) {
 - (void)reload;
 - (NSString *)aggregateState;
 - (void)clear;
+- (void)forceReload;
 @end
 
 @implementation ASSessionMonitor
@@ -299,7 +302,11 @@ static NSTextField *ASLabel(NSString *text, CGFloat size, NSFontWeight weight) {
         [visible addObject:signal];
     }
 
-    [visible sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+    NSInteger maxVisible = ASNormalizeMaxVisibleSessions(
+        [NSUserDefaults.standardUserDefaults integerForKey:ASMaxVisibleSessionsDefaultsKey]);
+    NSArray<NSDictionary *> *limited = ASLimitVisibleSignals(visible, maxVisible);
+    NSMutableArray<NSDictionary *> *sorted = [limited mutableCopy];
+    [sorted sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
         NSInteger leftPriority = ASStatePriority(ASDisplayState(left, now));
         NSInteger rightPriority = ASStatePriority(ASDisplayState(right, now));
         if (leftPriority != rightPriority) return leftPriority > rightPriority ? NSOrderedAscending : NSOrderedDescending;
@@ -309,14 +316,14 @@ static NSTextField *ASLabel(NSString *text, CGFloat size, NSFontWeight weight) {
     }];
 
     NSMutableArray<NSString *> *fingerprintParts = [NSMutableArray array];
-    for (NSDictionary *signal in visible) {
+    for (NSDictionary *signal in sorted) {
         [fingerprintParts addObject:[NSString stringWithFormat:@"%@:%@:%@:%@",
             signal[@"agent"], signal[@"session_id"], signal[@"updated_at"], ASDisplayState(signal, now)]];
     }
     NSString *fingerprint = [fingerprintParts componentsJoinedByString:@"|"];
     if (![fingerprint isEqualToString:self.lastFingerprint]) {
         self.lastFingerprint = fingerprint;
-        self.signals = visible;
+        self.signals = sorted;
         if (self.updateHandler) self.updateHandler(self.signals);
     }
 }
@@ -337,6 +344,11 @@ static NSTextField *ASLabel(NSString *text, CGFloat size, NSFontWeight weight) {
 
 - (void)clear {
     ASClearSignals(ASSignalRootURL(), nil);
+    self.lastFingerprint = nil;
+    [self reload];
+}
+
+- (void)forceReload {
     self.lastFingerprint = nil;
     [self reload];
 }
@@ -633,11 +645,17 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) NSMenu *menu;
 @property(nonatomic, strong) NSTimer *statusAnimationTimer;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *notifiedStates;
 @end
 
 @implementation ASAppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    self.notifiedStates = [NSMutableDictionary dictionary];
+    UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
+    [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
+        completionHandler:^(BOOL granted, NSError * _Nullable error) {}];
+
     self.monitor = [[ASSessionMonitor alloc] init];
     self.panelController = [[ASTopPanelController alloc] initWithSignals:self.monitor.signals];
 
@@ -645,6 +663,7 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
     self.monitor.updateHandler = ^(NSArray<NSDictionary *> *signals) {
         [weakSelf.panelController updateSignals:signals];
         [weakSelf updateStatusIcon];
+        [weakSelf notifyAttentionForSignals:signals];
     };
 
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:27];
@@ -655,6 +674,7 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
     self.statusItem.menu = self.menu;
     [self rebuildMenu];
     [self updateStatusIcon];
+    [self notifyAttentionForSignals:self.monitor.signals];
 
     self.statusAnimationTimer = [NSTimer timerWithTimeInterval:0.2
         target:self selector:@selector(updateStatusIcon) userInfo:nil repeats:YES];
@@ -667,6 +687,13 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
 
 - (void)rebuildMenu {
     [self.menu removeAllItems];
+    NSString *writeError = ASLoadHookWriteError(ASSignalRootURL());
+    if (writeError.length) {
+        NSMenuItem *errorItem = [[NSMenuItem alloc] initWithTitle:writeError action:nil keyEquivalent:@""];
+        errorItem.enabled = NO;
+        [self.menu addItem:errorItem];
+        [self.menu addItem:NSMenuItem.separatorItem];
+    }
     if (!self.monitor.signals.count) {
         NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:@"无活动会话" action:nil keyEquivalent:@""];
         empty.enabled = NO;
@@ -678,9 +705,17 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
             NSString *taskTitle = signal[@"task_title"];
             NSString *title = [NSString stringWithFormat:@"%@ · %@",
                 taskTitle.length ? taskTitle : project, ASStateTitle(ASDisplayState(signal, NSDate.date))];
-            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                action:@selector(openSession:) keyEquivalent:@""];
+            item.target = self;
+            item.representedObject = signal;
             item.image = ASAgentLogo(signal[@"agent"]);
-            item.enabled = NO;
+            BOOL isDirectory = NO;
+            BOOL cwdValid = cwd.length > 0 &&
+                [NSFileManager.defaultManager fileExistsAtPath:cwd isDirectory:&isDirectory] &&
+                isDirectory;
+            item.enabled = cwdValid;
+            if (!cwdValid) item.action = nil;
             [self.menu addItem:item];
         }
     }
@@ -712,6 +747,24 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
     lampStyleItem.submenu = lampStyleMenu;
     [self.menu addItem:lampStyleItem];
 
+    NSInteger currentMaxVisible = ASNormalizeMaxVisibleSessions(
+        [NSUserDefaults.standardUserDefaults integerForKey:ASMaxVisibleSessionsDefaultsKey]);
+    NSMenuItem *visibleCountItem = [[NSMenuItem alloc] initWithTitle:@"显示条数" action:nil keyEquivalent:@""];
+    visibleCountItem.image = [NSImage imageWithSystemSymbolName:@"list.number"
+        accessibilityDescription:@"显示条数"];
+    NSMenu *visibleCountMenu = [[NSMenu alloc] initWithTitle:@"显示条数"];
+    NSArray<NSNumber *> *visiblePresets = @[@5, @10, @20];
+    for (NSNumber *preset in visiblePresets) {
+        NSInteger limit = preset.integerValue;
+        NSMenuItem *item = [self menuItem:[NSString stringWithFormat:@"%ld 条", (long)limit]
+            symbol:@"number" action:@selector(changeMaxVisibleSessions:) key:@""];
+        item.tag = limit;
+        item.state = currentMaxVisible == limit ? NSControlStateValueOn : NSControlStateValueOff;
+        [visibleCountMenu addItem:item];
+    }
+    visibleCountItem.submenu = visibleCountMenu;
+    [self.menu addItem:visibleCountItem];
+
     [self.menu addItem:[self menuItem:@"重置窗口位置" symbol:@"arrow.up.and.down.and.arrow.left.and.right"
         action:@selector(resetPanelPosition:) key:@""]];
     [self.menu addItem:[self menuItem:@"清除历史灯组" symbol:@"trash" action:@selector(clearSignals:) key:@""]];
@@ -724,6 +777,49 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
     item.target = self;
     item.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:title];
     return item;
+}
+
+- (void)openSession:(NSMenuItem *)sender {
+    NSDictionary *signal = [sender.representedObject isKindOfClass:[NSDictionary class]] ?
+        sender.representedObject : nil;
+    NSString *cwd = signal[@"cwd"];
+    BOOL isDirectory = NO;
+    if (!cwd.length ||
+        ![NSFileManager.defaultManager fileExistsAtPath:cwd isDirectory:&isDirectory] ||
+        !isDirectory) {
+        return;
+    }
+    [[NSWorkspace sharedWorkspace] openFile:cwd];
+}
+
+- (void)notifyAttentionForSignals:(NSArray<NSDictionary *> *)signals {
+    NSDate *now = NSDate.date;
+    for (NSDictionary *signal in signals) {
+        NSString *sessionID = signal[@"session_id"] ?: @"";
+        if (!sessionID.length) continue;
+        NSString *state = ASDisplayState(signal, now);
+        NSString *previous = self.notifiedStates[sessionID];
+        self.notifiedStates[sessionID] = state;
+        if (!previous.length || [previous isEqualToString:state] || !ASNeedsUserAttention(state)) {
+            continue;
+        }
+        NSString *cwd = signal[@"cwd"];
+        NSString *project = cwd.length ? cwd.lastPathComponent : @"未知项目";
+        NSString *task = signal[@"task_title"];
+        NSString *body = project;
+        if (task.length && ![task isEqualToString:project]) {
+            body = [NSString stringWithFormat:@"%@\n%@", project, task];
+        }
+        UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
+        content.title = ASStateTitle(state);
+        content.body = body;
+        NSString *identifier = [NSString stringWithFormat:@"%@-%@-%@",
+            signal[@"agent"] ?: @"", sessionID, state];
+        UNNotificationRequest *request = [UNNotificationRequest
+            requestWithIdentifier:identifier content:content trigger:nil];
+        [UNUserNotificationCenter.currentNotificationCenter
+            addNotificationRequest:request withCompletionHandler:nil];
+    }
 }
 
 - (NSString *)hookExecutablePath {
@@ -760,6 +856,12 @@ static NSString * const ASPanelOriginYKey = @"panelOriginY";
 - (void)togglePanel:(id)sender { [self.panelController toggle]; }
 - (void)changeLampMode:(NSMenuItem *)sender {
     [self.panelController changeLampMode:(ASLampMode)sender.tag];
+    [self rebuildMenu];
+}
+- (void)changeMaxVisibleSessions:(NSMenuItem *)sender {
+    NSInteger limit = ASNormalizeMaxVisibleSessions(sender.tag);
+    [NSUserDefaults.standardUserDefaults setInteger:limit forKey:ASMaxVisibleSessionsDefaultsKey];
+    [self.monitor forceReload];
     [self rebuildMenu];
 }
 - (void)resetPanelPosition:(id)sender { [self.panelController resetPosition]; }

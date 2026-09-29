@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	productTitle    = "灯语"
+	productTitle    = "AI灯语"
 	wndClassMsg     = "aidengyuMsg"
 	wndClassPanel   = "aidengyuPanel"
 	singleInstMutex = "Local\\aidengyuWin"
@@ -36,6 +36,9 @@ const (
 	cmdResetPos       = 1006
 	cmdClearHistory   = 1007
 	cmdExit           = 1008
+	cmdVisible5       = 1009
+	cmdVisible10      = 1010
+	cmdVisible20      = 1011
 	cmdSessionBase    = 2000
 
 	// Resource id written by akavel/rsrc for -ico.
@@ -292,7 +295,7 @@ func (a *App) aggregateState() string {
 	return best
 }
 
-func visibleSignals(now time.Time) []core.Signal {
+func (a *App) visibleSignals(now time.Time) []core.Signal {
 	loaded := core.LoadSignals("")
 	out := make([]core.Signal, 0, len(loaded))
 	for _, signal := range loaded {
@@ -300,13 +303,14 @@ func visibleSignals(now time.Time) []core.Signal {
 			out = append(out, signal)
 		}
 	}
+	out = core.LimitVisibleSignals(out, a.settings.MaxVisibleSessions)
 	core.SortSignalsByDisplay(out, now)
 	return out
 }
 
 func (a *App) refreshSignals(force bool) {
 	now := time.Now()
-	signals := visibleSignals(now)
+	signals := a.visibleSignals(now)
 	var b strings.Builder
 	for _, s := range signals {
 		b.WriteString(s.Agent)
@@ -403,6 +407,16 @@ func (a *App) setLampMode(mode int) {
 	a.updateTrayIcon()
 }
 
+func (a *App) setMaxVisibleSessions(limit int) {
+	limit = core.NormalizeMaxVisibleSessions(limit)
+	if a.settings.MaxVisibleSessions == limit {
+		return
+	}
+	a.settings.MaxVisibleSessions = limit
+	_ = core.SaveSettings(a.settings, "")
+	a.refreshSignals(true)
+}
+
 func (a *App) installHooks() {
 	if err := core.InstallHooks(a.exePath, ""); err != nil {
 		messageBox("无法安装状态连接", err.Error())
@@ -432,6 +446,10 @@ func (a *App) showContextMenu() {
 	signals := append([]core.Signal(nil), a.signals...)
 	a.mu.Unlock()
 	now := time.Now()
+	if writeErr := core.LoadHookWriteError(""); writeErr != "" {
+		appendMenu(menu, MF_STRING|MF_GRAYED, 0, writeErr)
+		appendMenu(menu, MF_SEPARATOR, 0, "")
+	}
 	if len(signals) == 0 {
 		appendMenu(menu, MF_STRING|MF_GRAYED, cmdSessionBase, "无活动会话")
 	} else {
@@ -464,12 +482,27 @@ func (a *App) showContextMenu() {
 	}
 	appendMenu(menu, MF_POPUP, uintptr(style), "指示灯样式")
 
+	visible := createPopupMenu()
+	appendMenu(visible, MF_STRING, cmdVisible5, "5 条")
+	appendMenu(visible, MF_STRING, cmdVisible10, "10 条")
+	appendMenu(visible, MF_STRING, cmdVisible20, "20 条")
+	checkVisible := uint32(cmdVisible5)
+	switch core.NormalizeMaxVisibleSessions(a.settings.MaxVisibleSessions) {
+	case 10:
+		checkVisible = cmdVisible10
+	case 20:
+		checkVisible = cmdVisible20
+	}
+	checkMenuRadioItem(visible, cmdVisible5, cmdVisible20, checkVisible)
+	appendMenu(menu, MF_POPUP, uintptr(visible), "显示条数")
+
 	appendMenu(menu, MF_STRING, cmdResetPos, "重置窗口位置")
 	appendMenu(menu, MF_STRING, cmdClearHistory, "清除历史灯组")
 	appendMenu(menu, MF_SEPARATOR, 0, "")
 	appendMenu(menu, MF_STRING, cmdExit, "退出")
 
 	cmd := trackPopupMenu(menu, p.X, p.Y, a.msgHwnd)
+	destroyMenu(visible)
 	destroyMenu(style)
 	destroyMenu(menu)
 	a.handleCommand(cmd)
@@ -487,6 +520,12 @@ func (a *App) handleCommand(cmd uint32) {
 		a.setLampMode(1)
 	case cmdLampTriple:
 		a.setLampMode(3)
+	case cmdVisible5:
+		a.setMaxVisibleSessions(5)
+	case cmdVisible10:
+		a.setMaxVisibleSessions(10)
+	case cmdVisible20:
+		a.setMaxVisibleSessions(20)
 	case cmdResetPos:
 		a.resetPanelPosition()
 	case cmdClearHistory:
@@ -549,12 +588,7 @@ func (a *App) notifyAttention(signals []core.Signal, now time.Time) {
 }
 
 func needsAttention(state string) bool {
-	switch state {
-	case core.StateWaitingInput, core.StateWaitingApproval, core.StateFailed, core.StateBlocked:
-		return true
-	default:
-		return false
-	}
+	return core.NeedsUserAttention(state)
 }
 
 func balloonFlags(state string) uint32 {

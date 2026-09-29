@@ -85,7 +85,14 @@ int main(int argc, const char *argv[]) {
             NSDate.date,
             &error
         );
-        if (signal && !ASWriteSignal(signal, ASSignalRootURL(), &error)) signal = nil;
+        if (signal) {
+            if (!ASWriteSignal(signal, ASSignalRootURL(), &error)) {
+                // Never fail the agent lifecycle; surface the write error in-app instead.
+                NSString *message = error.localizedDescription ?: @"状态写入失败";
+                ASRecordHookWriteError(ASSignalRootURL(), [NSString stringWithFormat:@"状态写入失败: %@", message], nil);
+                signal = nil;
+            }
+        }
         if ([agent isEqualToString:ASAgentCursor]) ASPrintJSON(@{});
 
         if (!signal && error) {

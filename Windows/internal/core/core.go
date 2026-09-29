@@ -86,9 +86,17 @@ type Signal struct {
 	TaskTitle     string `json:"task_title,omitempty"`
 }
 
+// DefaultMaxVisibleSessions caps how many session rows the panel shows.
+// Floating panel height (~78px/row single lamp) comfortably fits about five.
+const DefaultMaxVisibleSessions = 5
+
+// VisibleSessionPresets are the tray-menu choices for MaxVisibleSessions.
+var VisibleSessionPresets = []int{5, 10, 20}
+
 type Settings struct {
-	LampMode      int             `json:"lampMode"`
-	PanelPosition *PanelPosition  `json:"panelPosition"`
+	LampMode            int            `json:"lampMode"`
+	PanelPosition       *PanelPosition `json:"panelPosition"`
+	MaxVisibleSessions  int            `json:"maxVisibleSessions,omitempty"`
 }
 
 type PanelPosition struct {
@@ -237,6 +245,70 @@ func SortSignalsByDisplay(signals []Signal, now time.Time) {
 		}
 		return signals[i].UpdatedAt > signals[j].UpdatedAt
 	})
+}
+
+// NormalizeMaxVisibleSessions returns limit when positive, otherwise DefaultMaxVisibleSessions.
+func NormalizeMaxVisibleSessions(limit int) int {
+	if limit <= 0 {
+		return DefaultMaxVisibleSessions
+	}
+	return limit
+}
+
+// NeedsUserAttention reports states that still require the user (bubble / retention).
+func NeedsUserAttention(state string) bool {
+	switch state {
+	case StateWaitingInput, StateWaitingApproval, StateFailed, StateBlocked:
+		return true
+	default:
+		return false
+	}
+}
+
+func newerSignalFirst(a, b Signal) bool {
+	if a.UpdatedAt != b.UpdatedAt {
+		return a.UpdatedAt > b.UpdatedAt
+	}
+	if a.Agent != b.Agent {
+		return a.Agent < b.Agent
+	}
+	return a.SessionID < b.SessionID
+}
+
+// LimitVisibleSignals keeps at most limit sessions. Rows that still need user attention
+// (failed / waiting_approval / blocked / waiting_input) are retained first; remaining
+// slots fill with the newest other sessions by UpdatedAt. Final display order is applied
+// separately by SortSignalsByDisplay.
+func LimitVisibleSignals(signals []Signal, limit int) []Signal {
+	limit = NormalizeMaxVisibleSessions(limit)
+	if len(signals) <= limit {
+		return signals
+	}
+	priority := make([]Signal, 0, len(signals))
+	rest := make([]Signal, 0, len(signals))
+	for _, signal := range signals {
+		if NeedsUserAttention(signal.State) {
+			priority = append(priority, signal)
+		} else {
+			rest = append(rest, signal)
+		}
+	}
+	sort.SliceStable(priority, func(i, j int) bool { return newerSignalFirst(priority[i], priority[j]) })
+	sort.SliceStable(rest, func(i, j int) bool { return newerSignalFirst(rest[i], rest[j]) })
+	out := make([]Signal, 0, limit)
+	for _, signal := range priority {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, signal)
+	}
+	for _, signal := range rest {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, signal)
+	}
+	return out
 }
 
 func LampPresentation(state string) (color, effect string) {
@@ -835,6 +907,50 @@ func SessionsDirectory(root string) string {
 	return filepath.Join(root, "sessions")
 }
 
+const hookWriteErrorFile = "hook_write_error.txt"
+
+// HookWriteErrorPath is the short-status file Hook writes when a status update fails.
+// Lives under SignalRoot next to sessions/ and settings.json.
+func HookWriteErrorPath(root string) string {
+	if root == "" {
+		root = SignalRoot()
+	}
+	return filepath.Join(root, hookWriteErrorFile)
+}
+
+// RecordHookWriteError stores one short user-visible line; Hook still exits 0 afterward.
+func RecordHookWriteError(root, message string) error {
+	if root == "" {
+		root = SignalRoot()
+	}
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = "状态写入失败"
+	}
+	runes := []rune(msg)
+	if len(runes) > 120 {
+		msg = string(runes[:120]) + "…"
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(HookWriteErrorPath(root), []byte(msg+"\n"), 0o644)
+}
+
+// ClearHookWriteError removes a previous Hook write failure after a successful write.
+func ClearHookWriteError(root string) {
+	_ = os.Remove(HookWriteErrorPath(root))
+}
+
+// LoadHookWriteError returns the last Hook write-failure line, or empty if none.
+func LoadHookWriteError(root string) string {
+	data, err := os.ReadFile(HookWriteErrorPath(root))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
 func loadJSON(file string, dest any) error {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -880,6 +996,7 @@ func WriteSignal(signal Signal, root string) (string, error) {
 	if err := writeJSONAtomic(file, merged); err != nil {
 		return "", err
 	}
+	ClearHookWriteError(root)
 	if corrected.Agent == AgentCursor {
 		for _, other := range []string{AgentCodex, AgentClaude} {
 			sibling := filepath.Join(directory, fmt.Sprintf("%s-%s.json", other, safeFilePart(corrected.SessionID)))
@@ -1280,6 +1397,7 @@ func LoadSettings(root string) Settings {
 	if value.LampMode != 3 {
 		value.LampMode = 1
 	}
+	value.MaxVisibleSessions = NormalizeMaxVisibleSessions(value.MaxVisibleSessions)
 	if value.PanelPosition != nil {
 		// keep as-is
 	}

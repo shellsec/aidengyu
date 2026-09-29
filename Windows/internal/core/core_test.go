@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -528,5 +529,188 @@ func TestInstallHooksWritesAidengyuFlag(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "aidengyu.exe") {
 		t.Fatal("hook command must point at aidengyu.exe")
+	}
+}
+
+func TestLimitVisibleSignalsKeepsNewest(t *testing.T) {
+	signals := []Signal{
+		{Agent: AgentCursor, SessionID: "old", State: StateReady, UpdatedAt: "2026-09-24T01:00:00.000Z"},
+		{Agent: AgentCursor, SessionID: "mid", State: StateWorking, UpdatedAt: "2026-09-24T02:00:00.000Z"},
+		{Agent: AgentCodex, SessionID: "new", State: StateThinking, UpdatedAt: "2026-09-24T03:00:00.000Z"},
+		{Agent: AgentClaude, SessionID: "newer", State: StateCompleted, UpdatedAt: "2026-09-24T04:00:00.000Z"},
+		{Agent: AgentCursor, SessionID: "newest", State: StateWaitingInput, UpdatedAt: "2026-09-24T05:00:00.000Z"},
+		{Agent: AgentCursor, SessionID: "extra", State: StateFailed, UpdatedAt: "2026-09-24T00:30:00.000Z"},
+	}
+	limited := LimitVisibleSignals(signals, 3)
+	if len(limited) != 3 {
+		t.Fatalf("want 3, got %d: %+v", len(limited), limited)
+	}
+	ids := map[string]bool{}
+	for _, s := range limited {
+		ids[s.SessionID] = true
+	}
+	// Attention rows keep a seat even when older; remaining slots are newest others.
+	for _, want := range []string{"newest", "extra", "newer"} {
+		if !ids[want] {
+			t.Fatalf("missing session %s in %+v", want, limited)
+		}
+	}
+	if ids["old"] || ids["mid"] || ids["new"] {
+		t.Fatalf("lower-priority older sessions should be dropped: %+v", limited)
+	}
+
+	if got := LimitVisibleSignals(signals[:2], 0); len(got) != 2 {
+		t.Fatalf("under default limit should keep all, got %d", len(got))
+	}
+	if NormalizeMaxVisibleSessions(0) != DefaultMaxVisibleSessions {
+		t.Fatal("zero should normalize to default")
+	}
+	if NormalizeMaxVisibleSessions(7) != 7 {
+		t.Fatal("positive limit should pass through")
+	}
+}
+
+func TestLimitVisibleSignalsKeepsAttentionOverNewerReady(t *testing.T) {
+	signals := []Signal{
+		{Agent: AgentCursor, SessionID: "old-failed", State: StateFailed, UpdatedAt: "2026-09-24T01:00:00.000Z"},
+		{Agent: AgentCodex, SessionID: "old-wait", State: StateWaitingApproval, UpdatedAt: "2026-09-24T01:30:00.000Z"},
+		{Agent: AgentClaude, SessionID: "fresh-ready", State: StateReady, UpdatedAt: "2026-09-24T09:00:00.000Z"},
+		{Agent: AgentCursor, SessionID: "fresh-work", State: StateWorking, UpdatedAt: "2026-09-24T09:30:00.000Z"},
+		{Agent: AgentCodex, SessionID: "fresh-think", State: StateThinking, UpdatedAt: "2026-09-24T10:00:00.000Z"},
+	}
+	limited := LimitVisibleSignals(signals, 3)
+	if len(limited) != 3 {
+		t.Fatalf("want 3, got %d: %+v", len(limited), limited)
+	}
+	ids := map[string]bool{}
+	for _, s := range limited {
+		ids[s.SessionID] = true
+	}
+	if !ids["old-failed"] || !ids["old-wait"] {
+		t.Fatalf("failed/waiting_approval must survive newer ready/working: %+v", limited)
+	}
+	if !ids["fresh-think"] {
+		t.Fatalf("remaining seat should be newest non-attention: %+v", limited)
+	}
+	if ids["fresh-ready"] || ids["fresh-work"] {
+		t.Fatalf("newer ready/working should yield to attention rows: %+v", limited)
+	}
+
+	cappedAttention := LimitVisibleSignals([]Signal{
+		{Agent: AgentCursor, SessionID: "f1", State: StateFailed, UpdatedAt: "2026-09-24T01:00:00.000Z"},
+		{Agent: AgentCursor, SessionID: "f2", State: StateBlocked, UpdatedAt: "2026-09-24T02:00:00.000Z"},
+		{Agent: AgentCursor, SessionID: "f3", State: StateWaitingApproval, UpdatedAt: "2026-09-24T03:00:00.000Z"},
+		{Agent: AgentCursor, SessionID: "ready", State: StateReady, UpdatedAt: "2026-09-24T04:00:00.000Z"},
+	}, 2)
+	if len(cappedAttention) != 2 {
+		t.Fatalf("want 2, got %d", len(cappedAttention))
+	}
+	for _, s := range cappedAttention {
+		if s.SessionID == "ready" {
+			t.Fatal("ready must not displace attention until attention itself exceeds N")
+		}
+	}
+}
+
+func TestHookWriteErrorRecordAndClear(t *testing.T) {
+	root := t.TempDir()
+	if got := LoadHookWriteError(root); got != "" {
+		t.Fatalf("want empty, got %q", got)
+	}
+	if err := RecordHookWriteError(root, "disk full"); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadHookWriteError(root); got != "disk full" {
+		t.Fatalf("want recorded error, got %q", got)
+	}
+	signal := Signal{
+		SchemaVersion: 1,
+		Agent:         AgentCursor,
+		SessionID:     "s1",
+		State:         StateReady,
+		EventName:     "sessionStart",
+		UpdatedAt:     "2026-09-24T10:00:00.000Z",
+		Cwd:           `E:\proj`,
+	}
+	if _, err := WriteSignal(signal, root); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadHookWriteError(root); got != "" {
+		t.Fatalf("successful write must clear hook error, got %q", got)
+	}
+}
+
+func TestSameSessionUpdateDoesNotAddRow(t *testing.T) {
+	root := t.TempDir()
+	first, err := MapHookPayload(map[string]any{
+		"session_id":      "same-target",
+		"hook_event_name": "sessionStart",
+		"cwd":             `E:\proj\demo`,
+		"prompt":          "first prompt",
+	}, AgentCursor, "", time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteSignal(first, root); err != nil {
+		t.Fatal(err)
+	}
+	second, err := MapHookPayload(map[string]any{
+		"session_id":      "same-target",
+		"hook_event_name": "postToolUse",
+		"cwd":             `E:\proj\demo`,
+		"prompt":          "updated prompt",
+	}, AgentCursor, "", time.Date(2026, 9, 24, 10, 5, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteSignal(second, root); err != nil {
+		t.Fatal(err)
+	}
+	signals := LoadSignals(root)
+	if len(signals) != 1 {
+		t.Fatalf("same session must stay one row, got %d: %+v", len(signals), signals)
+	}
+	if signals[0].SessionID != "same-target" || signals[0].State != StateWorking {
+		t.Fatalf("expected updated working row, got %+v", signals[0])
+	}
+	limited := LimitVisibleSignals(signals, DefaultMaxVisibleSessions)
+	if len(limited) != 1 {
+		t.Fatalf("limit must not invent rows, got %d", len(limited))
+	}
+}
+
+func TestLoadSettingsNormalizesMaxVisibleSessions(t *testing.T) {
+	root := t.TempDir()
+	settings := LoadSettings(root)
+	if settings.MaxVisibleSessions != DefaultMaxVisibleSessions {
+		t.Fatalf("empty settings want default %d, got %d", DefaultMaxVisibleSessions, settings.MaxVisibleSessions)
+	}
+	for _, preset := range VisibleSessionPresets {
+		if err := SaveSettings(Settings{LampMode: 1, MaxVisibleSessions: preset}, root); err != nil {
+			t.Fatal(err)
+		}
+		loaded := LoadSettings(root)
+		if loaded.MaxVisibleSessions != preset {
+			t.Fatalf("preset %d: want %d, got %d", preset, preset, loaded.MaxVisibleSessions)
+		}
+		signals := make([]Signal, 0, preset+3)
+		for i := 0; i < preset+3; i++ {
+			signals = append(signals, Signal{
+				Agent:     AgentCursor,
+				SessionID: fmt.Sprintf("s%d", i),
+				State:     StateReady,
+				UpdatedAt: fmt.Sprintf("2026-09-24T%02d:00:00.000Z", i),
+			})
+		}
+		limited := LimitVisibleSignals(signals, loaded.MaxVisibleSessions)
+		if len(limited) != preset {
+			t.Fatalf("preset %d: list should truncate to %d, got %d", preset, preset, len(limited))
+		}
+	}
+	if err := SaveSettings(Settings{LampMode: 1, MaxVisibleSessions: 0}, root); err != nil {
+		t.Fatal(err)
+	}
+	if loaded := LoadSettings(root); loaded.MaxVisibleSessions != DefaultMaxVisibleSessions {
+		t.Fatalf("zero should normalize to default %d, got %d", DefaultMaxVisibleSessions, loaded.MaxVisibleSessions)
 	}
 }

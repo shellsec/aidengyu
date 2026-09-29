@@ -160,6 +160,92 @@ int main(void) {
         ASAssert(ASWriteSignal(cursorSignal, stateRoot, nil), @"writes Cursor signal");
         ASAssert(ASLoadSignals(stateRoot).count == 3, @"sessions use separate files");
 
+        NSMutableDictionary *sameTarget = [cursorSignal mutableCopy];
+        sameTarget[@"state"] = ASStateWorking;
+        sameTarget[@"event_name"] = @"postToolUse";
+        sameTarget[@"updated_at"] = @"2099-01-01T00:00:00.000Z";
+        ASAssert(ASWriteSignal(sameTarget, stateRoot, nil), @"updates same Cursor session");
+        ASAssert(ASLoadSignals(stateRoot).count == 3, @"same session update must not add a row");
+
+        NSMutableArray *many = [NSMutableArray array];
+        for (NSInteger i = 0; i < 8; i++) {
+            [many addObject:@{
+                @"agent": ASAgentCursor,
+                @"session_id": [NSString stringWithFormat:@"s%ld", (long)i],
+                @"state": ASStateReady,
+                @"event_name": @"sessionStart",
+                @"updated_at": [NSString stringWithFormat:@"2026-09-24T%02ld:00:00.000Z", (long)i],
+                @"cwd": @"/tmp/project"
+            }];
+        }
+        NSArray *limited = ASLimitVisibleSignals(many, 5);
+        ASAssert(limited.count == 5, @"limit keeps only newest N sessions");
+        ASAssert([limited[0][@"session_id"] isEqualToString:@"s7"], @"newest session stays first after limit");
+        ASAssert(ASNormalizeMaxVisibleSessions(0) == ASDefaultMaxVisibleSessions(), @"zero uses default");
+        ASAssert(ASNormalizeMaxVisibleSessions(9) == 9, @"positive limit passes through");
+        NSArray *limitedTen = ASLimitVisibleSignals(many, 10);
+        ASAssert(limitedTen.count == 8, @"limit above count keeps all");
+
+        NSArray *attentionMix = @[
+            @{ @"agent": ASAgentCursor, @"session_id": @"old-failed", @"state": ASStateFailed,
+               @"event_name": @"stop", @"updated_at": @"2026-09-24T01:00:00.000Z", @"cwd": @"/tmp/a" },
+            @{ @"agent": ASAgentCodex, @"session_id": @"old-wait", @"state": ASStateWaitingApproval,
+               @"event_name": @"PermissionRequest", @"updated_at": @"2026-09-24T01:30:00.000Z", @"cwd": @"/tmp/b" },
+            @{ @"agent": ASAgentClaude, @"session_id": @"fresh-ready", @"state": ASStateReady,
+               @"event_name": @"sessionStart", @"updated_at": @"2026-09-24T09:00:00.000Z", @"cwd": @"/tmp/c" },
+            @{ @"agent": ASAgentCursor, @"session_id": @"fresh-work", @"state": ASStateWorking,
+               @"event_name": @"postToolUse", @"updated_at": @"2026-09-24T09:30:00.000Z", @"cwd": @"/tmp/d" },
+            @{ @"agent": ASAgentCodex, @"session_id": @"fresh-think", @"state": ASStateThinking,
+               @"event_name": @"UserPromptSubmit", @"updated_at": @"2026-09-24T10:00:00.000Z", @"cwd": @"/tmp/e" }
+        ];
+        NSArray *keptAttention = ASLimitVisibleSignals(attentionMix, 3);
+        ASAssert(keptAttention.count == 3, @"attention mix keeps N rows");
+        NSMutableSet *keptIDs = [NSMutableSet set];
+        for (NSDictionary *row in keptAttention) [keptIDs addObject:row[@"session_id"]];
+        ASAssert([keptIDs containsObject:@"old-failed"], @"old failed survives newer ready/working");
+        ASAssert([keptIDs containsObject:@"old-wait"], @"old waiting_approval survives newer ready/working");
+        ASAssert([keptIDs containsObject:@"fresh-think"], @"remaining seat is newest non-attention");
+        ASAssert(![keptIDs containsObject:@"fresh-ready"], @"newer ready yields to attention");
+        ASAssert(![keptIDs containsObject:@"fresh-work"], @"newer working yields to attention");
+        ASAssert(ASNeedsUserAttention(ASStateFailed), @"failed needs attention");
+        ASAssert(!ASNeedsUserAttention(ASStateReady), @"ready does not need attention");
+
+        ASAssert(ASRecordHookWriteError(stateRoot, @"disk full", nil), @"records hook write error");
+        ASAssert([ASLoadHookWriteError(stateRoot) isEqualToString:@"disk full"], @"loads hook write error");
+        NSDictionary *clearingSignal = @{
+            @"schema_version": @1,
+            @"agent": ASAgentCursor,
+            @"session_id": @"clear-err",
+            @"state": ASStateReady,
+            @"event_name": @"sessionStart",
+            @"updated_at": @"2026-09-24T12:00:00.000Z",
+            @"cwd": @"/tmp/clear"
+        };
+        ASAssert(ASWriteSignal(clearingSignal, stateRoot, nil), @"successful write clears hook error");
+        ASAssert(ASLoadHookWriteError(stateRoot) == nil, @"hook write error cleared after success");
+
+        for (NSNumber *preset in @[@5, @10, @20]) {
+            NSInteger limit = preset.integerValue;
+            NSMutableArray *overflow = [NSMutableArray array];
+            for (NSInteger i = 0; i < limit + 4; i++) {
+                [overflow addObject:@{
+                    @"agent": ASAgentCursor,
+                    @"session_id": [NSString stringWithFormat:@"p%ld", (long)i],
+                    @"state": ASStateReady,
+                    @"event_name": @"sessionStart",
+                    @"updated_at": [NSString stringWithFormat:@"2026-09-24T%02ld:00:00.000Z", (long)i],
+                    @"cwd": @"/tmp/project"
+                }];
+            }
+            NSArray *capped = ASLimitVisibleSignals(overflow, limit);
+            ASAssert(capped.count == (NSUInteger)limit, @"menu preset truncates to selected limit");
+        }
+        NSString *defaultsKey = @"maxVisibleSessions";
+        NSInteger previous = [NSUserDefaults.standardUserDefaults integerForKey:defaultsKey];
+        [NSUserDefaults.standardUserDefaults setInteger:20 forKey:defaultsKey];
+        ASAssert([NSUserDefaults.standardUserDefaults integerForKey:defaultsKey] == 20, @"selected limit persists in defaults");
+        [NSUserDefaults.standardUserDefaults setInteger:previous forKey:defaultsKey];
+
         NSURL *codexURL = ASCodexHooksURL(temporary);
         [[NSFileManager defaultManager] createDirectoryAtURL:codexURL.URLByDeletingLastPathComponent
             withIntermediateDirectories:YES attributes:nil error:nil];

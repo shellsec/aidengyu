@@ -1,95 +1,104 @@
 ﻿**Language:** [中文](README.md) | English
 
-[aiv123.com](https://aiv123.com/) · AI tools directory, 600+ tools in one place
+# aidengyu (AI灯语)
 
-## 🚀 Recommended: [ofox.ai](https://ofox.io/x/aiv123)
+Local agent status lights for macOS and Windows. The app lives in the system tray (menu bar on macOS) and a top-of-desktop panel. Each Codex, Claude Code, or Cursor session gets its own light group.
 
-> **In short**: One account for the latest GPT / Claude / Gemini and **100+** top models. First top-up gets an extra **$3** credit.
+Color and blink semantics: [docs/STATE_LANGUAGE.md](docs/STATE_LANGUAGE.md).
 
-Text, image, video, and embeddings in one place. Caching supported — repeat calls stay cheaper and faster.
+## Implementation
 
-[👉 Sign up](https://ofox.io/x/aiv123) · Global dedicated lines · Enterprise SLA · No conversation retention
+| Platform | Stack | Entry |
+| --- | --- | --- |
+| macOS | Objective-C / AppKit (`LSUIElement`, no Dock icon) | `Native/AgentSignalApp.m` + helper `AgentSignalHook` |
+| Windows | Go + Win32 (single-file GUI exe) | `Windows/cmd/signal` |
 
-| ⚡️ Faster & Leaner | 🧠 Models & Modalities | 🛡️ Privacy |
-|:---:|:---:|:---:|
-| Global lines, enterprise SLA, plus caching | 100+ models · text / image / video / embeddings | No conversation retention |
+Both sides share the same status model: install hooks, read local session JSON, show ready / thinking / working / waiting / failed (etc.) on the panel and tray. State stays on-device; the app itself does not make network requests.
 
-## ☕ Buy Me a Coke
+## Requirements
 
-Open source takes effort — sponsorship is welcome:  
-👉 [Afdian](https://ifdian.net/a/shellsec)
+**macOS**
 
----
+- macOS 13+ (`LSMinimumSystemVersion` / `-mmacosx-version-min=13.0`)
+- Xcode Command Line Tools (`clang`); full Xcode not required
+- DMG packaging must run on macOS (`hdiutil`)
 
-# aidengyu (灯语)
+**Windows**
 
-[![Build](https://github.com/shellsec/aidengyu/actions/workflows/build.yml/badge.svg)](https://github.com/shellsec/aidengyu/actions/workflows/build.yml)
+- [Go](https://go.dev/dl/) 1.22+ (`Windows/go.mod`)
+- The Windows build script uses `rsrc` to embed `Windows/assets/app.ico` (`go install` if missing)
 
-Local agent status lights for macOS and Windows. The app lives in the system tray and at the top of the desktop; each Codex, Claude Code, or Cursor session gets its own light group.
+## Layout
 
-<p align="center">
-  <img src="docs/app-preview.jpg" width="294" alt="Codex, Claude Code, and Cursor status light preview">
-</p>
+```text
+Native/                  macOS core + UI (SignalCore, AgentSignalApp, AgentSignalHook)
+NativeTests/             macOS core unit tests
+Assets/                  Agent logos for the macOS panel (openai/claude/cursor.svg)
+Resources/Info.plist     macOS bundle metadata (name AI灯语, version 0.1.0)
+Windows/cmd/signal/      Windows entry (tray UI + hook CLI)
+Windows/internal/core/   status map, session storage, hook merge
+Windows/internal/ui/     Win32 tray and top panel
+Windows/assets/app.ico   Windows app icon (embedded at build time)
+Windows/go.mod           Go module
+Scripts/test.sh          build and run macOS core tests
+Scripts/build-app.sh     Universal .app (+ create-dmg.sh)
+Scripts/create-dmg.sh    drag-install DMG (macOS only)
+Windows/build-windows.ps1  native Windows build + zip
+Windows/build-windows.sh   cross-compile Windows x64 (macOS/Linux)
+.github/workflows/build.yml  CI: parallel macOS / Windows artifacts
+docs/STATE_LANGUAGE.md   status-light language
+```
 
-### In use
-
-<p align="center">
-  <img src="docs/app-in-use.png" width="100%" alt="macOS menu bar, three-light mode, and multi-session usage">
-</p>
-
-## Features
-
-- macOS uses native AppKit with no Dock icon; Windows is a single-file Go + Win32 tray app (a few MB).
-- Top panel stays on top across Spaces / desktops; draggable, and always keeps part of itself on-screen.
-- Compact single-light by default, or street-style three lights from the menu; sessions stack vertically with error/wait states first.
-- Translucent panel background with light dividers between sessions.
-- Codex/OpenAI, Claude, and Cursor icons identify the agent (no names); short task titles come from the first line of user input.
-- Live Codex, Claude Code, and Cursor lifecycle hooks.
-- Menu (or tray) can install/repair/uninstall hooks, show/hide the panel, and clear history.
-- Structured merge of `~/.codex/hooks.json`, `~/.claude/settings.json`, and `~/.cursor/hooks.json`, preserving existing fields; timestamped backups before write.
-- All state stays on-device — no network, telemetry, or background service.
-
-Full color and blink semantics: [docs/STATE_LANGUAGE.md](docs/STATE_LANGUAGE.md).
-
-## Build
-
-### macOS
-
-Requires macOS 13+ and Xcode Command Line Tools (full Xcode not required).
+## macOS: test and build
 
 ```bash
 Scripts/test.sh
 Scripts/build-app.sh
 ```
 
-`build-app.sh` produces a Universal app (`dist/aidengyu.app`), ad-hoc signs it, and calls `Scripts/create-dmg.sh` for a drag-install DMG:
+`Scripts/test.sh` compiles `Native/SignalCore.m` + `NativeTests/SignalCoreTests.m` with `clang` and runs the binary.
 
-- `dist/aidengyu.app`
-- `dist/aidengyu-macOS-universal.dmg`
+`Scripts/build-app.sh` produces:
 
-Or build a DMG from an existing `.app` (macOS only, uses `hdiutil`):
+- `dist/aidengyu.app` (arm64 + x86_64 Universal, ad-hoc signed)
+- `dist/aidengyu-macOS-universal.dmg` (via `Scripts/create-dmg.sh` on Darwin)
+
+DMG only (existing `.app`, macOS required):
 
 ```bash
 Scripts/create-dmg.sh dist/aidengyu.app
 ```
 
-#### Install (drag)
+Dev launch: `open dist/aidengyu.app`.
 
-1. Open `aidengyu-macOS-universal.dmg`.
-2. Drag **aidengyu.app** into **Applications**.
-3. Launch from Applications.
+**Unsigned open (Gatekeeper):** Release `.app` / DMG builds are not notarized. If macOS blocks a double-click, **Control-click → Open** and confirm; if it still blocks, use **System Settings → Privacy & Security → Open Anyway**.
 
-Dev run without installing: `open dist/aidengyu.app`.
+Helper CLI:
 
-### Windows
+```bash
+dist/aidengyu.app/Contents/Helpers/AgentSignalHook --install
+dist/aidengyu.app/Contents/Helpers/AgentSignalHook --uninstall
+```
 
-Requires [Go](https://go.dev/dl/) 1.22+. Details: [Windows/README.md](Windows/README.md).
+Or use the menu-bar item **Install / repair status connection**.
+
+Session data:
+
+```text
+~/Library/Application Support/aidengyu/sessions/
+```
+
+If a legacy `CodexClaudeSignal` folder still exists, the first launch tries to migrate to `aidengyu`.
+
+## Windows: build and run
+
+See [Windows/README.md](Windows/README.md). Summary:
 
 ```powershell
 .\Windows\build-windows.ps1
 ```
 
-Cross-compile Windows x64 from macOS / Linux:
+Cross-compile from macOS / Linux:
 
 ```bash
 Windows/build-windows.sh
@@ -97,88 +106,49 @@ Windows/build-windows.sh
 
 Artifacts: `dist-windows/aidengyu.exe`, `dist-windows/aidengyu-Windows-x64.zip`.
 
-## GitHub Actions
+## Download
 
-Push to `main`, open a PR, or run **Build** manually — parallel jobs produce:
+Release assets are on [GitHub Releases](https://github.com/shellsec/aidengyu/releases). After a `v*` tag push, a Release includes:
 
-- `aidengyu-macOS-universal.zip`
-- `aidengyu-macOS-universal.dmg` (recommended install)
+- `aidengyu-macOS-universal.zip` / `aidengyu-macOS-universal.dmg`
 - `aidengyu-Windows-x64.zip`
 
-Download from the workflow run **Artifacts**. Pushing a `v*` tag also creates/updates a GitHub Release with those assets:
+- **macOS:** Unzip or open the DMG, then run `aidengyu.app`. For unsigned Gatekeeper prompts, see above.
+- **Windows:** Unzip the zip and run `aidengyu.exe` directly (no installer). On first launch SmartScreen may appear — choose **Run anyway**.
 
-```bash
-git tag v0.4.1
-git push origin v0.4.1
-```
+Once a Release exists, download from the page, or build links as follows:
 
-## Connect Codex, Claude Code, and Cursor
+- **GitHub direct** (example):  
+  `https://github.com/shellsec/aidengyu/releases/download/<tag>/aidengyu-macOS-universal.dmg`
+- **Accelerated download** (mirror prefix `https://gh-proxy.com/` before the GitHub URL), for example:  
+  `https://gh-proxy.com/https://github.com/shellsec/aidengyu/releases/download/<tag>/aidengyu-macOS-universal.dmg`
 
-1. Open the menu bar / tray status icon.
-2. Choose **Install / repair status connection**.
-3. Start **new** Codex, Claude Code, and Cursor sessions.
-4. On first Codex hook discovery, confirm trust in `/hooks`.
+Replace `<tag>` with the real version tag (e.g. `v0.1.0`) and the filename with the matching asset above. Same pattern for Windows: `aidengyu-Windows-x64.zip`.
 
-Or install via the packaged helper (macOS):
+## CI artifacts
 
-```bash
-dist/aidengyu.app/Contents/Helpers/AgentSignalHook --install
-```
+On push to `main`, PRs, or manual **Build** workflow runs:
 
-Uninstall only removes this app’s managed hook entries:
+- `aidengyu-macOS-universal.zip` / `aidengyu-macOS-universal.dmg`
+- `aidengyu-Windows-x64.zip`
 
-```bash
-dist/aidengyu.app/Contents/Helpers/AgentSignalHook --uninstall
-```
+Pushing a `v*` tag creates or updates a GitHub Release with those files. See **Download** above for direct and accelerated links.
 
-## Local data
+## Connect agents
 
-macOS:
+1. After launch, install or repair the status connection from the menu bar / tray.
+2. Start **new** Codex, Claude Code, and Cursor sessions (already-open sessions usually do not re-send `sessionStart`).
+3. On first Codex hook discovery, confirm trust in `/hooks`.
 
-```text
-~/Library/Application Support/aidengyu/sessions/
-```
-
-Windows:
+Hook config paths:
 
 ```text
-%APPDATA%\aidengyu\
+~/.codex/hooks.json
+~/.claude/settings.json
+~/.cursor/hooks.json
 ```
 
-If a legacy `CodexClaudeSignal` directory still exists, the first launch tries a one-time migrate to `aidengyu`; on failure it keeps reading the old path so light state is not lost.
-
-One JSON file per session: agent type, `session_id`, cwd, event name, status, update time, short error reason, and a task title (≤36 chars from the first line of user input). Hooks do not store full prompts, model output, tool args, or conversation bodies.
-
-## Layout
-
-```text
-Native/SignalCore.*              status map, storage, hook merge (macOS)
-Native/AgentSignalHook.m         Codex / Claude Code / Cursor hook binary
-Native/AgentSignalApp.m          menu bar, top panel, light animation
-NativeTests/                     dependency-free core tests
-Windows/cmd/signal/              Go entry (tray UI + hook CLI, single exe)
-Windows/internal/core/           Windows status map, storage, hook merge
-Windows/internal/ui/             Win32 tray and top panel
-Windows/assets/app.ico           icon embedded into the exe
-Windows/build-windows.ps1|.sh    Windows build and zip
-Scripts/build-app.sh             macOS Universal .app (+ create-dmg.sh)
-Scripts/create-dmg.sh            macOS drag-install DMG
-Scripts/test.sh                  macOS core tests
-docs/                            state language and screenshots
-.github/workflows/build.yml      parallel macOS / Windows CI
-```
-
-## References
-
-Product/UX research drew on these projects; this repo’s code is independent:
-
-- [guan-ops/Agent-Signal-Bar](https://github.com/guan-ops/Agent-Signal-Bar), Apache-2.0
-- [yelog/vibebar](https://github.com/yelog/vibebar), MIT
-- [michalstrnadel/AgentBar](https://github.com/michalstrnadel/AgentBar), MIT
-
-Codex/OpenAI, Claude, and Cursor marks from [Simple Icons](https://simpleicons.org/), CC0-1.0.
-
-Codex hooks: [OpenAI Codex Hooks](https://learn.chatgpt.com/docs/hooks). Cursor: [Cursor Hooks](https://cursor.com/docs/agent/hooks). Claude Code uses the lifecycle hooks supported by the current CLI.
+Install/uninstall only touch entries managed by this app, with a backup before write.
 
 ## License
 

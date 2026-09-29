@@ -27,6 +27,7 @@ clang "${COMMON_FLAGS[@]}" \
     "$PROJECT_DIR/Native/AgentSignalApp.m" \
     -framework Cocoa \
     -framework QuartzCore \
+    -framework UserNotifications \
     -o "$MACOS_DIR/AgentSignalApp"
 strip -x "$MACOS_DIR/AgentSignalApp"
 

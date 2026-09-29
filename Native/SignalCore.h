@@ -30,6 +30,10 @@ FOUNDATION_EXPORT NSDate * _Nullable ASSignalUpdatedAt(NSDictionary *signal);
 FOUNDATION_EXPORT NSString *ASDisplayState(NSDictionary *signal, NSDate *now);
 FOUNDATION_EXPORT BOOL ASIsPhantomReadySession(NSDictionary *signal);
 FOUNDATION_EXPORT BOOL ASShouldShowSignal(NSDictionary *signal, NSDate *now);
+FOUNDATION_EXPORT NSInteger ASDefaultMaxVisibleSessions(void);
+FOUNDATION_EXPORT NSInteger ASNormalizeMaxVisibleSessions(NSInteger limit);
+FOUNDATION_EXPORT BOOL ASNeedsUserAttention(NSString *state);
+FOUNDATION_EXPORT NSArray<NSDictionary *> *ASLimitVisibleSignals(NSArray<NSDictionary *> *signals, NSInteger limit);
 FOUNDATION_EXPORT NSDictionary<NSString *, NSString *> *ASLampPresentation(NSString *state);
 
 FOUNDATION_EXPORT NSDictionary * _Nullable ASMapHookPayload(
@@ -49,6 +53,10 @@ FOUNDATION_EXPORT NSURL *ASSignalRootURL(void);
 FOUNDATION_EXPORT NSArray<NSDictionary *> *ASLoadSignals(NSURL *rootURL);
 FOUNDATION_EXPORT BOOL ASWriteSignal(NSDictionary *signal, NSURL *rootURL, NSError **error);
 FOUNDATION_EXPORT BOOL ASClearSignals(NSURL *rootURL, NSError **error);
+FOUNDATION_EXPORT NSURL *ASHookWriteErrorURL(NSURL *rootURL);
+FOUNDATION_EXPORT BOOL ASRecordHookWriteError(NSURL *rootURL, NSString *message, NSError **error);
+FOUNDATION_EXPORT void ASClearHookWriteError(NSURL *rootURL);
+FOUNDATION_EXPORT NSString * _Nullable ASLoadHookWriteError(NSURL *rootURL);
 
 FOUNDATION_EXPORT NSURL *ASCodexHooksURL(NSURL *homeURL);
 FOUNDATION_EXPORT NSURL *ASClaudeSettingsURL(NSURL *homeURL);

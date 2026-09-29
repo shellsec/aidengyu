@@ -162,6 +162,62 @@ BOOL ASShouldShowSignal(NSDictionary *signal, NSDate *now) {
     return [now timeIntervalSinceDate:updatedAt] <= 3;
 }
 
+// Floating panel height (~88pt/row single lamp) comfortably fits about five rows.
+NSInteger ASDefaultMaxVisibleSessions(void) {
+    return 5;
+}
+
+NSInteger ASNormalizeMaxVisibleSessions(NSInteger limit) {
+    return limit > 0 ? limit : ASDefaultMaxVisibleSessions();
+}
+
+BOOL ASNeedsUserAttention(NSString *state) {
+    return [state isEqualToString:ASStateWaitingInput] ||
+        [state isEqualToString:ASStateWaitingApproval] ||
+        [state isEqualToString:ASStateFailed] ||
+        [state isEqualToString:ASStateBlocked];
+}
+
+static NSComparisonResult ASCompareSignalsByUpdatedAt(NSDictionary *left, NSDictionary *right) {
+    NSComparisonResult byTime = [(right[@"updated_at"] ?: @"") compare:(left[@"updated_at"] ?: @"")];
+    if (byTime != NSOrderedSame) return byTime;
+    NSComparisonResult byAgent = [(left[@"agent"] ?: @"") compare:(right[@"agent"] ?: @"")];
+    if (byAgent != NSOrderedSame) return byAgent;
+    return [(left[@"session_id"] ?: @"") compare:(right[@"session_id"] ?: @"")];
+}
+
+NSArray<NSDictionary *> *ASLimitVisibleSignals(NSArray<NSDictionary *> *signals, NSInteger limit) {
+    limit = ASNormalizeMaxVisibleSessions(limit);
+    if ((NSInteger)signals.count <= limit) return signals ?: @[];
+
+    NSMutableArray<NSDictionary *> *priority = [NSMutableArray array];
+    NSMutableArray<NSDictionary *> *rest = [NSMutableArray array];
+    for (NSDictionary *signal in signals) {
+        if (ASNeedsUserAttention(signal[@"state"])) {
+            [priority addObject:signal];
+        } else {
+            [rest addObject:signal];
+        }
+    }
+    [priority sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        return ASCompareSignalsByUpdatedAt(left, right);
+    }];
+    [rest sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        return ASCompareSignalsByUpdatedAt(left, right);
+    }];
+
+    NSMutableArray<NSDictionary *> *out = [NSMutableArray arrayWithCapacity:(NSUInteger)limit];
+    for (NSDictionary *signal in priority) {
+        if ((NSInteger)out.count >= limit) break;
+        [out addObject:signal];
+    }
+    for (NSDictionary *signal in rest) {
+        if ((NSInteger)out.count >= limit) break;
+        [out addObject:signal];
+    }
+    return out;
+}
+
 NSDictionary<NSString *, NSString *> *ASLampPresentation(NSString *state) {
     if ([state isEqualToString:ASStateReady]) return @{ @"color": @"green", @"effect": @"steady" };
     if ([state isEqualToString:ASStateThinking]) return @{ @"color": @"green", @"effect": @"breathe" };
@@ -479,6 +535,34 @@ static NSURL *ASSessionsURL(NSURL *rootURL) {
     return [rootURL URLByAppendingPathComponent:@"sessions" isDirectory:YES];
 }
 
+NSURL *ASHookWriteErrorURL(NSURL *rootURL) {
+    return [rootURL URLByAppendingPathComponent:@"hook_write_error.txt"];
+}
+
+BOOL ASRecordHookWriteError(NSURL *rootURL, NSString *message, NSError **error) {
+    NSString *msg = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (!msg.length) msg = @"状态写入失败";
+    if (msg.length > 120) msg = [[msg substringToIndex:120] stringByAppendingString:@"…"];
+    if (![NSFileManager.defaultManager createDirectoryAtURL:rootURL
+        withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions: @0700} error:error]) {
+        return NO;
+    }
+    NSData *data = [[msg stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
+    return [data writeToURL:ASHookWriteErrorURL(rootURL) options:NSDataWritingAtomic error:error];
+}
+
+void ASClearHookWriteError(NSURL *rootURL) {
+    [NSFileManager.defaultManager removeItemAtURL:ASHookWriteErrorURL(rootURL) error:nil];
+}
+
+NSString *ASLoadHookWriteError(NSURL *rootURL) {
+    NSData *data = [NSData dataWithContentsOfURL:ASHookWriteErrorURL(rootURL)];
+    if (!data.length) return nil;
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return trimmed.length ? trimmed : nil;
+}
+
 static NSString *ASSafeFilePart(NSString *value) {
     NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
         @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
@@ -539,6 +623,7 @@ BOOL ASWriteSignal(NSDictionary *signal, NSURL *rootURL, NSError **error) {
     NSDictionary *merged = ASMergeSignal(existing, corrected);
     NSData *data = [NSJSONSerialization dataWithJSONObject:merged options:NSJSONWritingPrettyPrinted error:error];
     if (!data || ![data writeToURL:fileURL options:NSDataWritingAtomic error:error]) return NO;
+    ASClearHookWriteError(rootURL);
 
     if ([corrected[@"agent"] isEqualToString:ASAgentCursor]) {
         for (NSString *other in @[ASAgentCodex, ASAgentClaude]) {

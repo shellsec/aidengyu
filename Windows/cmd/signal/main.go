@@ -106,7 +106,11 @@ func runCommandLine(argv []string) (handled bool, code int) {
 		}
 		signal, err := core.MapHookPayload(payload, agent, argumentValue(argv, "--event"), time.Now())
 		if err == nil {
-			_, _ = core.WriteSignal(signal, "")
+			if _, werr := core.WriteSignal(signal, ""); werr != nil {
+				// Never fail the agent lifecycle; surface the write error in-app instead.
+				_ = core.RecordHookWriteError("", "状态写入失败: "+werr.Error())
+				_, _ = os.Stderr.WriteString("aidengyu: " + werr.Error() + "\n")
+			}
 		}
 		if agent == core.AgentCursor {
 			_, _ = os.Stdout.WriteString("{}\n")
