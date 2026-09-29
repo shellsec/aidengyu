@@ -1,4 +1,25 @@
-﻿**Language:** [中文](README.md) | English
+﻿**语言 / Language:** [中文](README.md) | English
+
+[aiv123.com](https://aiv123.com/) · AI tools directory, 600+ tools in one place
+
+## 🚀 Recommended: [ofox.ai](https://ofox.io/x/aiv123)
+
+> **In short**: One account for the latest GPT / Claude / Gemini and **100+** top models. First top-up gets an extra **$3** credit.
+
+Text, image, video, and embeddings in one place. Caching supported — repeat calls stay cheaper and faster.
+
+[👉 Sign up](https://ofox.io/x/aiv123) · Global dedicated lines · Enterprise SLA · No conversation retention
+
+| ⚡️ Faster & Leaner | 🧠 Models & Modalities | 🛡️ Privacy |
+|:---:|:---:|:---:|
+| Global lines, enterprise SLA, plus caching | 100+ models · text / image / video / embeddings | No conversation retention |
+
+## ☕ Buy Me a Coke
+
+Open source takes effort — sponsorship is welcome:  
+👉 [爱发电 / Afdian](https://ifdian.net/a/shellsec)
+
+---
 
 # aidengyu (AI灯语)
 
@@ -108,22 +129,17 @@ Artifacts: `dist-windows/aidengyu.exe`, `dist-windows/aidengyu-Windows-x64.zip`.
 
 ## Download
 
-Release assets are on [GitHub Releases](https://github.com/shellsec/aidengyu/releases). After a `v*` tag push, a Release includes:
+**v0.1.0** installers are on [GitHub Releases](https://github.com/shellsec/aidengyu/releases/tag/v0.1.0):
 
-- `aidengyu-macOS-universal.zip` / `aidengyu-macOS-universal.dmg`
-- `aidengyu-Windows-x64.zip`
+| Platform | GitHub direct | Accelerated (gh-proxy) |
+| --- | --- | --- |
+| macOS (dmg) | [aidengyu-macOS-universal.dmg](https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-macOS-universal.dmg) | [accelerated](https://gh-proxy.com/https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-macOS-universal.dmg) |
+| Windows (zip) | [aidengyu-Windows-x64.zip](https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-Windows-x64.zip) | [accelerated](https://gh-proxy.com/https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-Windows-x64.zip) |
 
-- **macOS:** Unzip or open the DMG, then run `aidengyu.app`. For unsigned Gatekeeper prompts, see above.
-- **Windows:** Unzip the zip and run `aidengyu.exe` directly (no installer). On first launch SmartScreen may appear — choose **Run anyway**.
+- **macOS:** Open the DMG and drag the app to Applications. For unsigned Gatekeeper prompts, see above.
+- **Windows:** Unzip and run `aidengyu.exe` directly. On first launch SmartScreen may appear — choose **Run anyway**.
 
-Once a Release exists, download from the page, or build links as follows:
-
-- **GitHub direct** (example):  
-  `https://github.com/shellsec/aidengyu/releases/download/<tag>/aidengyu-macOS-universal.dmg`
-- **Accelerated download** (mirror prefix `https://gh-proxy.com/` before the GitHub URL), for example:  
-  `https://gh-proxy.com/https://github.com/shellsec/aidengyu/releases/download/<tag>/aidengyu-macOS-universal.dmg`
-
-Replace `<tag>` with the real version tag (e.g. `v0.1.0`) and the filename with the matching asset above. Same pattern for Windows: `aidengyu-Windows-x64.zip`.
+Formula: `accelerated URL = https://gh-proxy.com/ + original GitHub download URL`.
 
 ## CI artifacts
 

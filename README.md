@@ -1,5 +1,26 @@
 ﻿**语言 / Language:** 中文 | [English](README.en.md)
 
+[aiv123.com](https://aiv123.com/) · AI 工具导航，600+ 工具一网打尽
+
+## 🚀 推荐使用 [ofox.ai](https://ofox.io/x/aiv123)
+
+> **一句话**：一个账号直达最新 GPT / Claude / Gemini 等 **100+** 顶尖模型，首充额外赠 **$3** 额度。
+
+文本、图像、视频、向量一站调用；支持缓存，重复请求更省更快。
+
+[👉 注册领取](https://ofox.io/x/aiv123) · 全球专线 · 企业级 SLA · 不留存对话
+
+| ⚡️ 极速更省 | 🧠 模型与模态 | 🛡️ 隐私安全 |
+|:---:|:---:|:---:|
+| 全球专线，企业级 SLA，支持缓存 | 100+ 模型 · 文本 / 图像 / 视频 / 向量 | 不留存任何对话 |
+
+## ☕ 请我喝可乐
+
+开源不易，欢迎赞助支持：  
+👉 [爱发电](https://ifdian.net/a/shellsec)
+
+---
+
 # AI灯语（aidengyu）
 
 面向 macOS 与 Windows 的本地 Agent 状态指示灯。应用常驻系统托盘（macOS 为菜单栏）和桌面顶部面板；每个 Codex、Claude Code 或 Cursor 会话对应一组状态灯。
@@ -108,21 +129,17 @@ Windows/build-windows.sh
 
 ## 下载
 
-构建产物发布在 [GitHub Releases](https://github.com/shellsec/aidengyu/releases)。推送 `v*` 标签后 Release 会附带：
+当前版本 **v0.1.0** 安装包在 [GitHub Releases](https://github.com/shellsec/aidengyu/releases/tag/v0.1.0)：
 
-- `aidengyu-macOS-universal.zip` / `aidengyu-macOS-universal.dmg`
-- `aidengyu-Windows-x64.zip`（解压后直接运行 `aidengyu.exe`；首次可能出现 SmartScreen，选「仍要运行」）
+| 平台 | GitHub 原链 | 加速下载（gh-proxy） |
+| --- | --- | --- |
+| macOS（dmg） | [aidengyu-macOS-universal.dmg](https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-macOS-universal.dmg) | [加速链接](https://gh-proxy.com/https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-macOS-universal.dmg) |
+| Windows（zip） | [aidengyu-Windows-x64.zip](https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-Windows-x64.zip) | [加速链接](https://gh-proxy.com/https://github.com/shellsec/aidengyu/releases/download/v0.1.0/aidengyu-Windows-x64.zip) |
 
-macOS 未签名时：右键打开 `.app`，或在 **系统设置 → 隐私与安全性** 中「仍要打开」。
+- **macOS**：打开 dmg，将应用拖入「应用程序」。未签名时：右键打开 `.app`，或在 **系统设置 → 隐私与安全性** 中「仍要打开」。
+- **Windows**：解压 zip 后直接运行 `aidengyu.exe`；首次可能出现 SmartScreen，选「仍要运行」。
 
-有 Release 后可在页面直接下载，或按下述方式拼接链接。
-
-- **GitHub 原链**（示例）：  
-  `https://github.com/shellsec/aidengyu/releases/download/<tag>/aidengyu-macOS-universal.dmg`
-- **加速下载**：在原始 GitHub 文件链接前加上 `https://gh-proxy.com/`，例如：  
-  `https://gh-proxy.com/https://github.com/shellsec/aidengyu/releases/download/<tag>/aidengyu-macOS-universal.dmg`
-
-将 `<tag>` 换成实际版本标签（如 `v0.1.0`），文件名换成上表中的对应资产即可。Windows 等同理：`aidengyu-Windows-x64.zip`。
+加速规则：`加速链接 = https://gh-proxy.com/ + 原始 GitHub 下载链接`。
 
 ## CI 产物
 
